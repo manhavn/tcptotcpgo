@@ -15,7 +15,8 @@ import (
 )
 
 func main() {
-	var timeoutAliveSec int64 = 7_200 // waiting 2 hours { 60s * 60p * 2h = 7200s }
+	var rateCheckSeconds uint8 = 5
+	var keepAliveDelayTimeSeconds uint64 = 7_200 // waiting 2 hours { 60s * 60p * 2h = 7200s }
 
 	// TCP App Connect: Remote <-> Server ( google.com:80 <-> 0.0.0.0:9000 )
 	go func() {
@@ -45,7 +46,7 @@ func main() {
 			return
 		}
 		fmt.Println("Starting connect to stream server")
-		tcptotcpgo.Connect(streamServer, streamApp, timeoutAliveSec)
+		tcptotcpgo.Connect(streamServer, streamApp, rateCheckSeconds, keepAliveDelayTimeSeconds)
 		fmt.Println("Stop stream")
 	}()
 
@@ -64,11 +65,12 @@ func main() {
 				break
 			}
 			if tmpStream != nil {
-				go tcptotcpgo.Connect(accept, tmpStream, timeoutAliveSec)
+				go tcptotcpgo.Connect(accept, tmpStream, rateCheckSeconds, keepAliveDelayTimeSeconds)
 			} else {
 				tmpStream = accept
 			}
 		}
 	}()
 }
+
 ```

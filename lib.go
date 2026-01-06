@@ -5,75 +5,76 @@ import (
 	"time"
 )
 
-func stream(
-	readerClosed *bool,
-	writerClosed *bool,
-	streamRead *net.TCPConn,
-	streamWrite *net.TCPConn,
-	keepAlivePingRead *bool,
-) {
+func stream(closed *bool, reader *net.TCPConn, writer *net.TCPConn, ping *bool) {
 	defer func() {
-		if streamWrite != nil {
-			_ = streamWrite.Close()
+		*closed = true
+		if reader != nil {
+			_ = reader.Close()
 		}
-		*writerClosed = true
+		if writer != nil {
+			_ = writer.Close()
+		}
 	}()
 	buf := make([]byte, 16*1024)
 	for {
-		if *readerClosed {
+		if *closed {
 			break
 		} else {
-			n, err := streamRead.Read(buf)
+			n, err := reader.Read(buf)
 			if err != nil || n == 0 {
 				break
 			}
-			_, err = streamWrite.Write(buf[:n])
+			*ping = true
+			_, err = writer.Write(buf[:n])
 			if err != nil {
 				break
 			}
-			*keepAlivePingRead = true
 		}
 	}
 }
 
-func Connect(streamServer *net.TCPConn, streamApp *net.TCPConn, timeoutAliveSec int64) {
-	streamServerClosed := false
-	streamAppClosed := false
-	keepAlivePingServer := false
-	keepAlivePingApp := false
+func Connect(
+	stream1 *net.TCPConn,
+	stream2 *net.TCPConn,
+	rateCheckSeconds uint8,
+	keepAliveDelayTimeSeconds uint64,
+) {
+	var closed, ping1, ping2 bool
 
-	go func() {
-		var timeout int64 = 5 // timeout rate 5s
-		countMaxWaiting := timeoutAliveSec / timeout
-		time.Sleep(time.Duration(timeout) * time.Second)
-		var countWaiting int64
-		for {
-			if keepAlivePingApp && keepAlivePingServer {
-				keepAlivePingApp = false
-				keepAlivePingServer = false
-				countWaiting = 0
-			} else {
-				countWaiting++
-				// waiting 2 hours
-				if countWaiting >= countMaxWaiting {
-					streamServerClosed = true
-					streamAppClosed = true
-					if streamServer != nil {
-						streamServer.Close()
-					}
-					if streamApp != nil {
-						streamApp.Close()
-					}
-					break
+	go stream(&closed, stream1, stream2, &ping1)
+	go stream(&closed, stream2, stream1, &ping2)
+
+	if rateCheckSeconds < 1 {
+		rateCheckSeconds = 1
+	}
+	if keepAliveDelayTimeSeconds < 2 {
+		keepAliveDelayTimeSeconds = 2
+	}
+
+	var delay uint64
+	maxDelay := keepAliveDelayTimeSeconds / uint64(rateCheckSeconds)
+	rateCheck := time.Duration(rateCheckSeconds) * time.Second
+	for {
+		if ping1 && ping2 {
+			ping1 = false
+			ping2 = false
+			delay = 0 // reset delay count
+		} else {
+			if delay > maxDelay {
+				closed = true
+				if stream1 != nil {
+					_ = stream1.Close()
 				}
-				time.Sleep(time.Duration(timeout) * time.Second)
-				if streamServerClosed || streamAppClosed {
-					break
+				if stream2 != nil {
+					_ = stream2.Close()
 				}
+				break
+			}
+			delay++
+			time.Sleep(rateCheck)
+			if closed {
+				break
 			}
 		}
-	}()
-
-	go stream(&streamServerClosed, &streamAppClosed, streamServer, streamApp, &keepAlivePingServer)
-	stream(&streamAppClosed, &streamServerClosed, streamApp, streamServer, &keepAlivePingApp)
+	}
 }
